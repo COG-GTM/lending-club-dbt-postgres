@@ -8,7 +8,7 @@ models:
   - name: my_loans_model
     description: My loans model
     columns:
-      - name: id
+      - name: loan_id_broken
         description: A unique LC assigned ID for the loan listing.
         tests:
           - unique
