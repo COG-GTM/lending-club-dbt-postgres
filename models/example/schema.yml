@@ -731,3 +731,48 @@ models:
               type: average
             median_interest_rate:
               type: median
+
+  - name: credit_risk_summary
+    description: >-
+      Aggregates Lending Club loan data by loan grade (A-G) to produce
+      a credit-risk overview. Includes total loan count, total loan amount,
+      average interest rate, default rate, and a risk classification for
+      each grade. Intended for risk analysts and portfolio managers.
+    columns:
+      - name: grade
+        description: >-
+          LC assigned loan grade (A through G). Each row represents one
+          distinct grade.
+        tests:
+          - unique
+          - not_null
+      - name: total_loan_count
+        description: Total number of loans issued for this grade.
+        tests:
+          - not_null
+      - name: total_loan_amount
+        description: >-
+          Sum of the listed loan amounts for all loans in this grade.
+        tests:
+          - not_null
+      - name: avg_interest_rate
+        description: >-
+          Average interest rate (as a decimal, e.g. 12.34) across all
+          loans in this grade, rounded to four decimal places.
+        tests:
+          - not_null
+      - name: default_rate
+        description: >-
+          Proportion of loans in this grade whose status is 'Charged Off'
+          or 'Default', expressed as a decimal between 0 and 1, rounded
+          to four decimal places.
+        tests:
+          - not_null
+      - name: risk_classification
+        description: >-
+          Risk tier derived from the loan grade. A-B = LOW RISK,
+          C-D = MEDIUM RISK, E-G = HIGH RISK.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['LOW RISK', 'MEDIUM RISK', 'HIGH RISK']
