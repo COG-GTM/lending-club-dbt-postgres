@@ -119,9 +119,9 @@ SELECT
     open_il_6m,
     mo_sin_old_rev_tl_op,
     -- Derived date columns
-    TO_DATE(issue_d, 'Mon-YYYY') as issue_date,
-    TO_DATE(last_credit_pull_d, 'Mon-YYYY') as last_credit_pull_date,
-    TO_DATE(last_pymnt_d, 'Mon-YYYY') as last_pymnt_date,
+    TO_DATE(issue_d, 'YY-Mon') as issue_date,
+    TO_DATE(last_credit_pull_d, 'YY-Mon') as last_credit_pull_date,
+    TO_DATE(last_pymnt_d, 'YY-Mon') as last_pymnt_date,
     -- Derived numeric columns
     CAST(REPLACE(int_rate, '%', '') AS DECIMAL) / 100 as interest_rate,
     -- NEW: risk_tier column (schema drift)
