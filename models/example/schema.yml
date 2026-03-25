@@ -91,6 +91,17 @@ models:
         meta:
           dimension:
             type: string
+      - name: risk_tier
+        description: >-
+          Risk tier derived from the LC assigned loan grade.
+          A = LOW, B-C = MEDIUM, D-G = HIGH.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['HIGH', 'MEDIUM', 'LOW']
+        meta:
+          dimension:
+            type: string
       - name: sub_grade
         description: LC assigned loan subgrade.
         meta:
