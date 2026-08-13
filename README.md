@@ -117,11 +117,29 @@ docker-compose up --remove-orphans
 
 ### Load the loans dataset into the postgres database
 
-Ensure that the connection strings are updated correctly. This loads the dataset/loans.csv file into your local postgres setup.
+Ensure that the connection strings are updated correctly. First create the raw
+landing table, then load the dataset/loan.csv file into your local postgres setup.
 
 ```
+psql -h localhost -U postgres -d postgres -f scripts/create_loans_table.sql
 python scripts/load_db_data.py
 ```
+
+### Data-quality controls
+
+The project carries a loan-level data-quality control set: 26 controls
+implemented as named dbt tests across `models/example/schema.yml`,
+`models/example/sources.yml` and `tests/`. They run with the models:
+
+```
+dbt deps  --profiles-dir .
+dbt build --profiles-dir .
+```
+
+The control register — what each control asserts, the dbt test that implements
+it, the SQL an auditor can re-run, and the before/after result with row counts —
+is in [docs/loan-data-qc-evidence.md](docs/loan-data-qc-evidence.md). The same
+controls run in CI on every pull request (`.github/workflows/dbt-qc.yml`).
 
 ### Initialise your dbt project
 

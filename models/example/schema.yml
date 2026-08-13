@@ -2,27 +2,79 @@
 # Definition of dimensions, metrics, types, and numbers are done here
 # Read more about dbt <> Lightdash metrics here https://docs.lightdash.com/references/metrics/
 # Read more about dbt <> Lightdash dimensions here https://docs.lightdash.com/references/dimensions
+#
+# DATA-QUALITY CONTROL SET
+# Every test below carries an explicit control ID (dq_NN_...). The control
+# register - what each control asserts, the SQL an auditor can re-run, and the
+# before/after result with row counts - is docs/loan-data-qc-evidence.md.
+# Raw-layer controls (DQ-04, DQ-05) are declared in sources.yml.
 
 version: 2
 models:
   - name: my_loans_model
-    description: My loans model
+    description: >-
+      Loan-level analytical model, one row per loan listing. Carries the
+      loan-level data-quality control set documented in
+      docs/loan-data-qc-evidence.md.
+    tests:
+      # CONTROL DQ-06: row-count parity between the raw extract and the
+      # transformed model - the transformation must neither drop nor duplicate
+      # loans.
+      - dbt_utils.equal_rowcount:
+          name: dq_06_row_count_parity_raw_vs_model
+          compare_model: source('lending_club', 'loans')
     columns:
-      - name: loan_id_broken
-        description: A unique LC assigned ID for the loan listing.
+      - name: loan_id
+        description: >-
+          A unique LC assigned ID for the loan listing. This is the true loan
+          key and the only identifier that may be used to join this model
+          downstream. It is sourced from the raw column "id"; the semantic
+          layer previously declared the key as "loan_id_broken" (see DQ-03).
         tests:
-          - unique
-          - not_null
+          # CONTROL DQ-01: the loan key is unique - no double-counted loans.
+          - unique:
+              name: dq_01_loan_key_is_unique
+          # CONTROL DQ-02: the loan key is complete - no unidentifiable loans.
+          - not_null:
+              name: dq_02_loan_key_is_not_null
         meta:
           dimension:
+            label: loan id
             type: number
           metrics:
             number_of_loans:
               type: count
             number_of_unique_loans:
               type: count_distinct
+      - name: loan_id_broken
+        description: >-
+          QUARANTINED - DO NOT USE. Legacy key column name introduced in commit
+          3addfa7 ("Data quality check update"), which renamed the tested key
+          from "id" to "loan_id_broken". No such column exists in the raw
+          extract or in the warehouse, so the uniqueness and not-null controls
+          bound to it could not execute and the loan key was effectively
+          uncontrolled. The name is retained here, forced to NULL and hidden
+          from BI, so the defect stays visible in lineage and any consumer
+          still joining on it fails loudly instead of silently. The
+          authoritative key is loan_id.
+        tests:
+          # CONTROL DQ-03: the quarantined key is inert - 100% NULL, so it
+          # cannot be used as a join key or a count_distinct grain.
+          - dbt_utils.expression_is_true:
+              name: dq_03_quarantined_key_is_inert
+              expression: "is null"
+        meta:
+          dimension:
+            type: number
+            hidden: true
       - name: member_id
         description: A unique LC assigned ID for the borrower member.
+        tests:
+          # CONTROL DQ-24: borrower key is unique and complete.
+          - unique:
+              name: dq_24_member_key_is_unique
+          - not_null:
+              name: dq_24_member_key_is_not_null
         meta:
           dimension:
             type: string
@@ -36,6 +88,17 @@ models:
           The listed amount of the loan applied for by the borrower. If at some
           point in time, the credit department reduces the loan amount, then it
           will be reflected in this value.
+        tests:
+          # CONTROL DQ-15: every loan carries a non-negative, plausible
+          # principal. LC personal loans are issued between $500 and $35,000;
+          # the bound is set at $40,000 to allow for product change.
+          - not_null:
+              name: dq_15_loan_amount_is_not_null
+          - dbt_utils.accepted_range:
+              name: dq_15_loan_amount_in_plausible_range
+              min_value: 500
+              max_value: 40000
+              inclusive: true
         meta:
           dimension:
             label: loan amount
@@ -50,6 +113,18 @@ models:
               type: sum
       - name: funded_amnt
         description: The total amount committed to that loan at that point in time.
+        tests:
+          # CONTROL DQ-16: funded amount is non-negative and can never exceed
+          # the amount applied for.
+          - not_null:
+              name: dq_16_funded_amount_is_not_null
+          - dbt_utils.accepted_range:
+              name: dq_16_funded_amount_is_non_negative
+              min_value: 0
+              inclusive: true
+          - dbt_utils.expression_is_true:
+              name: dq_16_funded_amount_not_above_loan_amount
+              expression: "<= loan_amnt"
         meta:
           dimension:
             type: number
@@ -60,6 +135,16 @@ models:
         description: >-
           The total amount committed by investors for that loan at that point in
           time.
+        tests:
+          # CONTROL DQ-17: the investor-funded portion is non-negative and
+          # cannot exceed the total funded amount.
+          - dbt_utils.accepted_range:
+              name: dq_17_investor_funded_amount_is_non_negative
+              min_value: 0
+              inclusive: true
+          - dbt_utils.expression_is_true:
+              name: dq_17_investor_funded_not_above_funded_amount
+              expression: "<= funded_amnt"
         meta:
           dimension:
             type: number
@@ -70,9 +155,27 @@ models:
         description: >-
           The number of payments on the loan. Values are in months and can be
           either 36 or 60.
+        tests:
+          # CONTROL DQ-13: term is one of the two contractual products.
+          - accepted_values:
+              name: dq_13_term_is_a_valid_product
+              values: ["36 months", "60 months"]
         meta:
           dimension:
             type: string
+      - name: term_months
+        description: Loan term parsed to an integer number of months.
+        tests:
+          # CONTROL DQ-13: parsed term matches the contractual products.
+          - not_null:
+              name: dq_13_term_months_is_not_null
+          - accepted_values:
+              name: dq_13_term_months_is_36_or_60
+              values: [36, 60]
+              quote: false
+        meta:
+          dimension:
+            type: number
       - name: int_rate
         description: Interest Rate on the loan.
         meta:
@@ -80,6 +183,16 @@ models:
             type: string
       - name: installment
         description: The monthly payment owed by the borrower if the loan originates.
+        tests:
+          # CONTROL DQ-18: the monthly instalment is strictly positive and
+          # within a plausible ceiling for a $40k / 36-month product.
+          - not_null:
+              name: dq_18_installment_is_not_null
+          - dbt_utils.accepted_range:
+              name: dq_18_installment_in_plausible_range
+              min_value: 0
+              max_value: 2000
+              inclusive: false
         meta:
           dimension:
             type: number
@@ -88,6 +201,13 @@ models:
               type: sum
       - name: grade
         description: LC assigned loan grade.
+        tests:
+          # CONTROL DQ-09: credit grade is on the published A-G scale.
+          - not_null:
+              name: dq_09_grade_is_not_null
+          - accepted_values:
+              name: dq_09_grade_is_on_published_scale
+              values: ["A", "B", "C", "D", "E", "F", "G"]
         meta:
           dimension:
             type: string
@@ -111,7 +231,13 @@ models:
       - name: home_ownership
         description: >-
           The home ownership status provided by the borrower during
-          registration. Our values are: RENT, OWN, MORTGAGE, OTHER.
+          registration. Values observed in this extract are RENT, OWN,
+          MORTGAGE, OTHER and NONE.
+        tests:
+          # CONTROL DQ-11: home ownership is a known category.
+          - accepted_values:
+              name: dq_11_home_ownership_is_a_known_category
+              values: ["RENT", "OWN", "MORTGAGE", "OTHER", "NONE"]
         meta:
           dimension:
             type: string
@@ -119,6 +245,14 @@ models:
         description: >-
           The self-reported annual income provided by the borrower during
           registration.
+        tests:
+          # CONTROL DQ-20: self-reported income is non-negative and within a
+          # plausible ceiling (max observed $6,000,000).
+          - dbt_utils.accepted_range:
+              name: dq_20_annual_income_in_plausible_range
+              min_value: 0
+              max_value: 10000000
+              inclusive: true
         meta:
           dimension:
             type: number
@@ -129,6 +263,11 @@ models:
         description: >-
           Indicates if income was verified by LC, not verified, or if the income
           source was verified.
+        tests:
+          # CONTROL DQ-12: income verification status is a known category.
+          - accepted_values:
+              name: dq_12_verification_status_is_a_known_category
+              values: ["Verified", "Source Verified", "Not Verified"]
         meta:
           dimension:
             type: string
@@ -139,6 +278,14 @@ models:
             type: string
       - name: loan_status
         description: Current status of the loan.
+        tests:
+          # CONTROL DQ-08: loan status is one of the recognised lifecycle
+          # states - an unrecognised state would misstate the loss provision.
+          - not_null:
+              name: dq_08_loan_status_is_not_null
+          - accepted_values:
+              name: dq_08_loan_status_is_a_known_state
+              values: ["Current", "Fully Paid", "Charged Off"]
         meta:
           dimension:
             type: string
@@ -159,6 +306,27 @@ models:
             type: string
       - name: purpose
         description: A category provided by the borrower for the loan request.
+        tests:
+          # CONTROL DQ-14: loan purpose is a known category.
+          - accepted_values:
+              name: dq_14_purpose_is_a_known_category
+              values:
+                [
+                  "car",
+                  "credit_card",
+                  "debt_consolidation",
+                  "educational",
+                  "home_improvement",
+                  "house",
+                  "major_purchase",
+                  "medical",
+                  "moving",
+                  "other",
+                  "renewable_energy",
+                  "small_business",
+                  "vacation",
+                  "wedding",
+                ]
         meta:
           dimension:
             type: string
@@ -184,6 +352,14 @@ models:
           A ratio calculated using the borrower’s total monthly debt payments on
           the total debt obligations, excluding mortgage and the requested LC
           loan, divided by the borrower’s self-reported monthly income.
+        tests:
+          # CONTROL DQ-21: debt-to-income ratio is a percentage between 0 and
+          # 100 - a value outside this band indicates a unit or scaling defect.
+          - dbt_utils.accepted_range:
+              name: dq_21_dti_is_a_valid_percentage
+              min_value: 0
+              max_value: 100
+              inclusive: true
         meta:
           dimension:
             type: number
@@ -249,10 +425,24 @@ models:
       - name: revol_util
         description: >-
           Revolving line utilization rate, or the amount of credit the borrower
-          is using relative to all available revolving credit.
+          is using relative to all available revolving credit. Held as the raw
+          percentage string; see revol_util_pct for the numeric form.
         meta:
           dimension:
             type: string
+      - name: revol_util_pct
+        description: Revolving line utilization rate parsed to a numeric percentage.
+        tests:
+          # CONTROL DQ-22: utilisation is a percentage between 0 and 200 -
+          # over-limit accounts can exceed 100 but not by an order of magnitude.
+          - dbt_utils.accepted_range:
+              name: dq_22_revolving_utilisation_in_plausible_range
+              min_value: 0
+              max_value: 200
+              inclusive: true
+        meta:
+          dimension:
+            type: number
       - name: total_acc
         description: >-
           The total number of credit lines currently in the borrower's credit
@@ -270,6 +460,12 @@ models:
             type: string
       - name: out_prncp
         description: Remaining outstanding principal for total amount funded.
+        tests:
+          # CONTROL DQ-23: outstanding principal can never be negative.
+          - dbt_utils.accepted_range:
+              name: dq_23_outstanding_principal_is_non_negative
+              min_value: 0
+              inclusive: true
         meta:
           dimension:
             type: number
@@ -288,6 +484,12 @@ models:
               type: sum
       - name: total_pymnt
         description: Payments received to date for total amount funded.
+        tests:
+          # CONTROL DQ-23: cash amounts received can never be negative.
+          - dbt_utils.accepted_range:
+              name: dq_23_total_payment_is_non_negative
+              min_value: 0
+              inclusive: true
         meta:
           dimension:
             type: number
@@ -306,11 +508,23 @@ models:
               type: sum
       - name: total_rec_prncp
         description: Principal received to date for total amount funded.
+        tests:
+          # CONTROL DQ-23: cash amounts received can never be negative.
+          - dbt_utils.accepted_range:
+              name: dq_23_principal_received_is_non_negative
+              min_value: 0
+              inclusive: true
         meta:
           dimension:
             type: number
       - name: total_rec_int
         description: Interest received to date for total amount funded.
+        tests:
+          # CONTROL DQ-23: cash amounts received can never be negative.
+          - dbt_utils.accepted_range:
+              name: dq_23_interest_received_is_non_negative
+              min_value: 0
+              inclusive: true
         meta:
           dimension:
             type: number
@@ -324,6 +538,12 @@ models:
               type: sum
       - name: recoveries
         description: post charge off gross recovery.
+        tests:
+          # CONTROL DQ-23: cash amounts received can never be negative.
+          - dbt_utils.accepted_range:
+              name: dq_23_recoveries_are_non_negative
+              min_value: 0
+              inclusive: true
         meta:
           dimension:
             type: number
@@ -707,7 +927,17 @@ models:
           dimension:
             type: string
       - name: issue_date
-        description: ""
+        description: Issue month parsed to a date.
+        tests:
+          # CONTROL DQ-25: every loan has a parseable issue date inside the
+          # window covered by this extract (issued 2007-06 to 2011-12).
+          - not_null:
+              name: dq_25_issue_date_parses_for_every_loan
+          - dbt_utils.accepted_range:
+              name: dq_25_issue_date_in_extract_window
+              min_value: "'2007-01-01'::date"
+              max_value: "'2016-12-31'::date"
+              inclusive: true
         meta:
           dimension:
             type: date
@@ -722,7 +952,17 @@ models:
           dimension:
             type: date
       - name: interest_rate
-        description: ""
+        description: Interest rate on the loan, parsed from the raw percentage string.
+        tests:
+          # CONTROL DQ-19: the priced interest rate is present and inside the
+          # usury-plausible band of 0-40%.
+          - not_null:
+              name: dq_19_interest_rate_is_not_null
+          - dbt_utils.accepted_range:
+              name: dq_19_interest_rate_in_plausible_range
+              min_value: 0
+              max_value: 40
+              inclusive: false
         meta:
           dimension:
             type: number

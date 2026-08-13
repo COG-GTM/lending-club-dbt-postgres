@@ -1,0 +1,55 @@
+name: dbt data-quality controls
+
+# Runs the loan-level QC control set (docs/loan-data-qc-evidence.md) on every
+# change: builds the raw landing table, loads dataset/loan.csv through the
+# existing ingestion script, then runs dbt build so every control executes.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  dbt-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: "password!"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "password!"
+      POSTGRES_DB: postgres
+      POSTGRES_SCHEMA: public
+      PGPASSWORD: "password!"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dbt-postgres
+        run: pip install "dbt-postgres==1.9.0" psycopg2-binary
+
+      - name: Create raw landing table
+        run: psql -h localhost -U postgres -d postgres -f scripts/create_loans_table.sql
+
+      - name: Load raw loans extract
+        run: python scripts/load_db_data.py
+
+      - name: dbt deps
+        run: dbt deps --profiles-dir .
+
+      - name: dbt build (models + data-quality controls)
+        run: dbt build --profiles-dir .
