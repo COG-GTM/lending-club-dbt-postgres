@@ -1,0 +1,15 @@
+# Connection profile for the demo Postgres instance described in the README.
+# Values are overridable with environment variables so the same profile works
+# locally and in CI: dbt <command> --profiles-dir .
+dbt_postgres_demo:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'postgres') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'password!') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'postgres') }}"
+      schema: "{{ env_var('POSTGRES_SCHEMA', 'public') }}"
+      threads: 4

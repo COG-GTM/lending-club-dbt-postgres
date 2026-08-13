@@ -1,0 +1,38 @@
+# Raw (pre-transformation) layer.
+#
+# The loans table is the landing zone for dataset/loan.csv, loaded by
+# scripts/load_db_data.py after scripts/create_loans_table.sql has created it.
+# Controls declared here are the "as received" checks: they assert the state of
+# the data before any dbt transformation, which is what an auditor needs in
+# order to separate source defects from transformation defects.
+
+version: 2
+
+sources:
+  - name: lending_club
+    description: Raw Lending Club loan extract as landed in Postgres.
+    schema: "{{ env_var('POSTGRES_SCHEMA', 'public') }}"
+    tables:
+      - name: loans
+        description: >-
+          One row per loan listing, every column landed as text. Missing values
+          are encoded by the extract as the literal string 'NA'.
+        columns:
+          - name: id
+            description: >-
+              The true unique LC-assigned loan listing key in the raw extract.
+              39,717 rows / 39,717 distinct values / 0 nulls at profiling time.
+            tests:
+              # CONTROL DQ-04: raw loan key is unique and complete at source.
+              - unique:
+                  name: dq_04_raw_loan_key_is_unique
+              - not_null:
+                  name: dq_04_raw_loan_key_is_not_null
+          - name: member_id
+            description: Unique LC-assigned borrower key in the raw extract.
+            tests:
+              # CONTROL DQ-05: raw borrower key is unique and complete.
+              - unique:
+                  name: dq_05_raw_member_key_is_unique
+              - not_null:
+                  name: dq_05_raw_member_key_is_not_null
