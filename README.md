@@ -123,6 +123,8 @@ Ensure that the connection strings are updated correctly. This loads the dataset
 python scripts/load_db_data.py
 ```
 
+`my_loans_model` is materialized as a table, so run `dbt run` (or `dbt build`) again after every load to refresh it.
+
 ### Initialise your dbt project
 
 This is the part where you initialise dbt project. 
